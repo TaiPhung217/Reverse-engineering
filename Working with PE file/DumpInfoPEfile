@@ -1,0 +1,286 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+int main(int argc, char *argv[])
+{
+
+    HANDLE file, mapOb;
+    DWORD rawOffset, *currThunk;
+    PIMAGE_DOS_HEADER dosHeader;
+
+    LPVOID point, inject;
+
+    PIMAGE_NT_HEADERS peHeader;
+    PIMAGE_FILE_HEADER fileHeader;
+    PIMAGE_OPTIONAL_HEADER32 opHeader;
+    PIMAGE_DATA_DIRECTORY dataDic;
+
+    PIMAGE_SECTION_HEADER secHeader, secCode;
+
+    PIMAGE_EXPORT_DIRECTORY exp;
+    PIMAGE_IMPORT_DESCRIPTOR imp;
+
+    if (argc < 2) {
+		printf("Usage: ./target-file.exe");
+		ExitProcess(0);
+	}
+
+    //load file
+    file = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if(file == INVALID_HANDLE_VALUE) {
+        printf("==> Khong the mo file\n");
+    }
+    else {
+        //map file to Memory
+        mapOb = CreateFileMapping(file, NULL,PAGE_READONLY,0,0,NULL);
+        point = MapViewOfFile(mapOb, FILE_MAP_READ,0,0,0); // giá trị bắt đầu của dạng xem được ánh xạ
+
+        //DOS Header
+        dosHeader = (PIMAGE_DOS_HEADER)point;
+
+        //PE Header
+        peHeader = (PIMAGE_NT_HEADERS)((BYTE*)dosHeader + dosHeader->e_lfanew);
+
+        //FILE Header
+        fileHeader = (PIMAGE_FILE_HEADER)&peHeader->FileHeader;
+
+
+        if(dosHeader->e_magic == IMAGE_DOS_SIGNATURE && peHeader->Signature == IMAGE_NT_SIGNATURE) {
+
+        // OPTIONAL Header
+        opHeader = (PIMAGE_OPTIONAL_HEADER32)&peHeader->OptionalHeader;
+
+        //Data Directory
+        dataDic = opHeader->DataDirectory;
+
+
+        //************DOS header information*******
+        printf("----------------------------------DOS Header Information----------------------------------\n\n");
+        printf("Magic number: \t\t\t\t%#x (%s)\n", 				dosHeader->e_magic, dosHeader->e_magic == 0x5a4d ? "MZ" : "-");
+        printf("Bytes on last page of file: \t\t%#x\n", 			dosHeader->	e_cblp);
+        printf("Pages in file: \t\t\t\t%#x\n", 					dosHeader->e_cp		);
+        printf("Relocations: \t\t\t\t%#x\n",					dosHeader->e_crlc		);
+        printf("Size of header in paragraphs: \t\t%#x\n", 		dosHeader->e_cparhdr	);
+        printf("Minimum extra paragraphs needed: \t%#x\n", 		dosHeader->e_minalloc	);
+        printf("Maximum extra paragraphs needed: \t%#x\n",		dosHeader->e_maxalloc	);
+        printf("Initial (relative) SS value: \t\t%#x\n", 		dosHeader->e_ss		);
+        printf("Initial SP value: \t\t\t%#x\n",					dosHeader->e_sp		);
+        printf("Checksum: \t\t\t\t%#x\n", 						dosHeader->e_csum		);
+        printf("Initial IP value: \t\t\t%#x\n", 				dosHeader->e_ip		);
+        printf("Initial (relative) CS value: \t\t%#x\n", 		dosHeader->e_cs		);
+        printf("File address of relocation table: \t%#x\n",		dosHeader->e_lfarlc	);
+        printf("Overlay number: \t\t\t%#x\n", 					dosHeader->e_ovno		);
+        printf("OEM identifier (for e_oeminfo): \t%#x\n", 		dosHeader->e_oemid		);
+        printf("OEM information; e_oemid specific: \t%#x\n",	dosHeader->e_oeminfo	);
+        printf("File address of new exe header: \t%#lx\n\n",	dosHeader->e_lfanew	);
+
+        //Dump PE header
+        printf("---------------------------------- PE Header Information----------------------------------\n\n");
+            printf("Signature: \t\t\t\t%#lx (%s)\n", 				peHeader->Signature, "PE"		);
+			printf("Machine: ");
+			switch(fileHeader->Machine){
+			case IMAGE_FILE_MACHINE_I386:
+				printf("\t\tx86\n");
+				break;
+			case IMAGE_FILE_MACHINE_IA64:
+				printf("\t\tIntel Itanium\n");
+				break;
+			case IMAGE_FILE_MACHINE_AMD64:
+				printf("\t\tx64\n");
+				break;
+			}
+			printf("Number of sections: \t\t\t%#x\n", 				fileHeader->NumberOfSections		);
+			printf("TimeDatestamp: \t\t\t\t%lu\n", 						fileHeader->TimeDateStamp			);
+			printf("PointToSymbolTableOffset: \t\t\t%#lx\n", 			fileHeader->PointerToSymbolTable	);
+			printf("NumberOfSymbols: \t\t\t%#lx\n", 				fileHeader->NumberOfSymbols			);
+			printf("SizeOfOptionalHeaders: \t\t%#x\n", 			fileHeader->SizeOfOptionalHeader	);
+			printf("Image characteristics: ");
+			if((fileHeader->Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE) == IMAGE_FILE_EXECUTABLE_IMAGE)
+				printf("\t\t\tThe file is executable.\n");
+			if((fileHeader->Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) == IMAGE_FILE_LARGE_ADDRESS_AWARE)
+				printf("\t\t\tThe application can handle addresses larger than 2 GB.\n");
+			if((fileHeader->Characteristics & IMAGE_FILE_SYSTEM) == IMAGE_FILE_SYSTEM)
+				printf("\t\t\tThe image is a system file.\n");
+			if((fileHeader->Characteristics & IMAGE_FILE_DLL) == IMAGE_FILE_DLL)
+				printf("\t\t\tThe image is a DLL file.\n");
+			printf("\n");
+
+
+			//Dump Optional Header
+			printf("------------------------------PE Optional Header Information------------------------------\n\n");
+			printf("Magic: \t\t\t\t\t%#x \t(%s)\n", 								opHeader->Magic, opHeader->Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? "PE64" : "PE32" );
+			printf("Major Linker Version: \t\t\t\t\t%#x \t(%d)\n",							opHeader->MajorLinkerVersion, 			opHeader->MajorLinkerVersion					);
+			printf("Minor Linker Version: \t\t\t\t\t%#x \t(%d)\n",							opHeader->MinorLinkerVersion, 			opHeader->MinorLinkerVersion					);
+			printf("Size of code section(.text): \t\t\t\t%lu \tbytes\n",					opHeader->SizeOfCode															);
+			printf("Size of initialized data section: \t\t\t%lu \tbytes\n",					opHeader->SizeOfInitializedData													);
+			printf("Size of uninitialized data section: \t\t\t%lu \tbytes\n",				opHeader->SizeOfUninitializedData												);
+			printf("Address of entry point: \t\t\t\t%#lx\n",								opHeader->AddressOfEntryPoint													);
+			printf("Base address of code section: \t\t\t\t%#lx\n",							opHeader->BaseOfCode															);
+			printf("Base address of data section: \t\t\t\t%#lx\n",							opHeader->BaseOfData															);
+			printf("Base address of image in memory: \t\t\t%#lx\n",							opHeader->ImageBase																);
+			printf("Sections alignment in memory (bytes): \t\t\t%#lx\n", 					opHeader->SectionAlignment														);
+			printf("Raw data of sections alignment in image file (bytes): \t%#lx\n", 		opHeader->FileAlignment															);
+			printf("OS major version required: \t\t\t\t%#x \t(%d)\n",						opHeader->MajorOperatingSystemVersion, 	opHeader->MajorOperatingSystemVersion 	);
+			printf("OS minor version required: \t\t\t\t%#x \t(%d)\n",						opHeader->MinorOperatingSystemVersion, 	opHeader->MinorOperatingSystemVersion 	);
+			printf("Image major version number: \t\t\t\t%#x \t(%d)\n",						opHeader->MajorImageVersion, 			opHeader->MajorImageVersion 			);
+			printf("Image minor version number: \t\t\t\t%#x \t(%d)\n",						opHeader->MinorImageVersion, 			opHeader->MinorImageVersion			 	);
+			printf("Subsystem major version number: \t\t\t%#x \t(%d)\n",					opHeader->MajorSubsystemVersion, 		opHeader->MajorSubsystemVersion		 	);
+			printf("Subsystem minor version number: \t\t\t%#x \t(%d)\n",					opHeader->MinorSubsystemVersion, 		opHeader->MinorSubsystemVersion		 	);
+			printf("Image size: \t\t\t\t\t\t%lu \tbytes\n",									opHeader->SizeOfImage															);
+			printf("Size of headers: \t\t\t\t\t%lu \tbytes\n",								opHeader->SizeOfHeaders															);
+			printf("Image file checksum: \t\t\t\t\t%#lx\n",									opHeader->CheckSum																);
+			printf("Subsystem: \t\t\t\t\t\t%#x (",											opHeader->Subsystem																);
+			switch(opHeader->Subsystem){
+			case IMAGE_SUBSYSTEM_NATIVE:
+				printf("Device driver - Native system process)\n");
+				break;
+			case IMAGE_SUBSYSTEM_WINDOWS_GUI:
+				printf("Windows GUI)\n");
+				break;
+			case IMAGE_SUBSYSTEM_WINDOWS_CUI:
+				printf("Windows CUI)\n");
+				break;
+			case IMAGE_SUBSYSTEM_WINDOWS_CE_GUI:
+				printf("Windows CE)\n");
+				break;
+			}
+			printf("Dll characteristics: \t\t\t\t\t%#x\n",									opHeader->DllCharacteristics					);
+			printf("Number of bytes reserved for stack: \t\t\t%lu bytes\n",					opHeader->SizeOfStackReserve					);
+			printf("Number of bytes to commit for stack: \t\t\t%lu bytes\n",				opHeader->SizeOfStackCommit						);
+			printf("Number of bytes to reserve for local heap: \t\t%lu bytes\n",			opHeader->SizeOfHeapReserve						);
+			printf("Number of bytes to commit for local heap: \t\t%lu bytes\n",				opHeader->SizeOfHeapCommit						);
+			printf("Number of directory entries: \t\t\t\t%lu\n\n",							opHeader->NumberOfRvaAndSizes					);
+
+
+			//Dump Data Directory
+			printf("----------------------------------Data Directories----------------------------------\n\n");
+			for(int i = 1; i <= opHeader->NumberOfRvaAndSizes; i++)
+				printf("Directory No. %d: \t\t\t\t\t%#lx (%lu bytes)\n", i, dataDic[i].VirtualAddress, dataDic[i].Size);
+			printf("\n");
+
+
+			//Dump Image Section Header
+			secHeader = IMAGE_FIRST_SECTION(peHeader);
+			printf("-----------------------------------Image Section Header-----------------------------------\n\n");
+			for(int i = 0;i < fileHeader->NumberOfSections; i++, secHeader++ ){
+                printf("Section name: \t\t\t\t\t\t%s\n", 							secHeader->Name                     );
+                printf("File Address: \t\t\t\t\t\t%#lx\n", 							secHeader->Misc.PhysicalAddress		);
+				printf("Section size in memory: \t\t\t\t%lu bytes\n", 				secHeader->Misc.VirtualSize			);
+				printf("Virtual Address: \t\t\t\t\t%#lx\n", 						secHeader->VirtualAddress			);
+				printf("Size of initialized data on disk: \t\t\t%lu bytes\n",		secHeader->SizeOfRawData			);
+				printf("Pointer to raw data: \t\t\t\t\t%#lx\n",						secHeader->PointerToRawData			);
+				printf("Pointer to relocations: \t\t\t\t%#lx\n",					secHeader->PointerToRelocations		);
+				printf("Pointer to line numbers: \t\t\t\t%#lx\n",					secHeader->PointerToLinenumbers		);
+				printf("Number of relocation entries: \t\t\t\t%#x\n",				secHeader->NumberOfRelocations		);
+				printf("Number of line number entries: \t\t\t\t%#x\n",				secHeader->NumberOfLinenumbers		);
+				if((secHeader->Characteristics & IMAGE_SCN_CNT_CODE) == IMAGE_SCN_CNT_CODE)
+					printf("\t\t\t\t\tThe section contains executable code.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_CNT_INITIALIZED_DATA) == IMAGE_SCN_CNT_INITIALIZED_DATA)
+					printf("\t\t\t\t\tThe section contains initialized data.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == IMAGE_SCN_CNT_UNINITIALIZED_DATA)
+					printf("\t\t\t\t\tThe section contains uninitialized data.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_LNK_INFO) == IMAGE_SCN_LNK_INFO)
+					printf("\t\t\t\t\tThe section contains comments or other information.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_MEM_SHARED) == IMAGE_SCN_MEM_SHARED)
+					printf("\t\t\t\t\tThe section can be shared in memory.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_MEM_EXECUTE) == IMAGE_SCN_MEM_EXECUTE)
+					printf("\t\t\t\t\tThe section can be executed as code.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_MEM_READ) == IMAGE_SCN_MEM_READ)
+					printf("\t\t\t\t\tThe section can be read.\n");
+				if((secHeader->Characteristics & IMAGE_SCN_MEM_WRITE) == IMAGE_SCN_MEM_WRITE)
+					printf("\t\t\t\t\tThe section can be written to.\n");
+                printf("\n\n");
+			}
+
+
+			// Dump Export table
+			if( dataDic[0].Size > 0){
+				secHeader = IMAGE_FIRST_SECTION(peHeader);
+
+				for(int i = 0; i < fileHeader->NumberOfSections; i++){
+					if((secHeader->VirtualAddress <= dataDic[0].VirtualAddress) && (secHeader->VirtualAddress + secHeader->Misc.VirtualSize > dataDic[0].VirtualAddress)){
+						break;
+
+					}
+
+					secHeader++;
+				}
+
+				rawOffset = (DWORD)point + secHeader->PointerToRawData;
+
+				printf("-----------------------------------------EXPORTS-----------------------------------------\n\n");
+
+				exp = (PIMAGE_EXPORT_DIRECTORY)(rawOffset + dataDic[0].VirtualAddress - secHeader->VirtualAddress);
+
+				printf("- DLL name: %s\n", rawOffset + exp->Name - secHeader->VirtualAddress);
+
+				DWORD *eat = (DWORD*)(rawOffset + exp->AddressOfFunctions - secHeader->VirtualAddress);
+				WORD *eot = (WORD*)(rawOffset + exp->AddressOfNameOrdinals - secHeader->VirtualAddress);
+				DWORD *ent = (DWORD*)(rawOffset + exp->AddressOfNames - secHeader->VirtualAddress);
+
+				for( int i=0; i < exp->NumberOfFunctions; i++){
+					printf("\tFuntion RVAs: %#x", eat[i]);
+
+					for(int j=0; j<exp->NumberOfNames; j++){
+
+						if (i == eot[j]){
+							printf("\tName: %s", (rawOffset + ent[j] - secHeader->VirtualAddress));
+							break;
+						}
+					}
+				printf ("\n");
+				}
+			}
+
+			//Dump Import Table
+			if(dataDic[1].Size > 0){
+                secHeader = IMAGE_FIRST_SECTION(peHeader);
+
+                for(int i = 0; i < fileHeader->NumberOfSections; i++, secHeader++){
+                    if((secHeader->VirtualAddress <= dataDic[1].VirtualAddress) && (secHeader->VirtualAddress + secHeader->Misc.VirtualSize > dataDic[1].VirtualAddress)){
+						break;
+					}
+                }
+
+			}
+
+			rawOffset = (DWORD)point + secHeader->PointerToRawData;
+
+			imp = (PIMAGE_IMPORT_DESCRIPTOR)(rawOffset + dataDic[1].VirtualAddress - secHeader->VirtualAddress);
+			if(imp){
+                printf("-----------------------------------------IMPORTS-----------------------------------------\n\n");
+                while(imp->Characteristics != 0  || imp->FirstThunk != 0 || imp->ForwarderChain != 0 || imp->Name != 0 || imp->OriginalFirstThunk != 0 || imp->TimeDateStamp != 0){
+                    printf("\t\tDLL name: %s\n", rawOffset + imp->Name - secHeader->VirtualAddress);
+
+                    if(imp->OriginalFirstThunk != 0){
+                        currThunk = (DWORD*)(rawOffset + imp->OriginalFirstThunk - secHeader->VirtualAddress);
+                    }
+                    else{
+                        currThunk = (DWORD*)(rawOffset + imp->FirstThunk - secHeader->VirtualAddress);
+                    }
+
+                   while( *currThunk != 0){
+
+						DWORD imgTrnkData = *currThunk;
+
+						if(imgTrnkData & IMAGE_ORDINAL_FLAG32){
+							printf("\tOrdinal: %#x\n", imgTrnkData^IMAGE_ORDINAL_FLAG32);
+						}else{
+							PIMAGE_IMPORT_BY_NAME iibn = (PIMAGE_IMPORT_BY_NAME)(rawOffset + imgTrnkData - secHeader->VirtualAddress);
+							printf("\tFuntion: %s\n", iibn->Name);
+						}
+
+						currThunk++;
+						}
+
+                    imp++;
+                }
+			}
+
+
+
+        }
+    return 0;
+    }
+}
